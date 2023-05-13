@@ -1,83 +1,101 @@
-```python
-# Import libraries
+1. Import the necessary libraries:
+
+```
 import tensorflow as tf
-from tensorflow.keras import layers
 import numpy as np
-import matplotlib.pyplot as plt
 import os
-import time
+from PIL import Image
+from google.colab import drive
+```
 
-# Load dataset of female fantasy creature images
-# Here, I am assuming that the dataset is stored in a folder called "fantasy_images"
-path = "/content/drive/MyDrive/fantasy_images"
-train_images = tf.keras.preprocessing.image_dataset_from_directory(
-    path,
-    image_size=(256, 256),
-    batch_size=32
-)
+2. Mount your Google Drive and set the runtime environment to GPU:
 
-# Define the generator model
-def make_generator_model():
+```
+drive.mount('/content/gdrive')
+%tensorflow_version 2.x
+```
+
+3. Define the hyperparameters and load the dataset:
+
+```
+BATCH_SIZE = 64
+EPOCHS = 200
+LATENT_DIM = 100
+IMAGE_SIZE = 64
+DATA_PATH = "/content/gdrive/My Drive/female_fantasy_creatures_dataset/"
+
+train_dataset = tf.keras.preprocessing.image_dataset_from_directory(
+    DATA_PATH,
+    image_size=(IMAGE_SIZE, IMAGE_SIZE),
+    batch_size=BATCH_SIZE)
+```
+
+4. Define the generator and discriminator networks:
+
+```
+def generator_model():
     model = tf.keras.Sequential()
-    model.add(layers.Dense(64*64*256, use_bias=False, input_shape=(100,)))
-    model.add(layers.BatchNormalization())
-    model.add(layers.LeakyReLU())
-
-    model.add(layers.Reshape((64, 64, 256)))
-    assert model.output_shape == (None, 64, 64, 256)
-
-    model.add(layers.Conv2DTranspose(128, (5, 5), strides=(2, 2), padding='same', use_bias=False))
-    assertmodel.output_shape == (None, 128, 128, 128)
-    model.add(layers.BatchNormalization())
-    model.add(layers.LeakyReLU())
-
-    model.add(layers.Conv2DTranspose(64, (5, 5), strides=(2, 2), padding='same', use_bias=False))
-    assert model.output_shape == (None, 256, 256, 64)
-    model.add(layers.BatchNormalization())
-    model.add(layers.LeakyReLU())
-
-    model.add(layers.Conv2DTranspose(3, (5, 5), strides=(2, 2), padding='same', use_bias=False, activation='tanh'))
-    assert model.output_shape == (None, 512, 512, 3)
-
+    model.add(tf.keras.layers.Dense(8 * 8 * 256, input_shape=(LATENT_DIM,)))
+    model.add(tf.keras.layers.Reshape((8, 8, 256)))
+    model.add(tf.keras.layers.Conv2DTranspose(128, (4, 4), strides=(2, 2), padding='same'))
+    model.add(tf.keras.layers.LeakyReLU(alpha=0.2))
+    model.add(tf.keras.layers.Conv2DTranspose(128, (4, 4), strides=(2, 2), padding='same'))
+    model.add(tf.keras.layers.LeakyReLU(alpha=0.2))
+    model.add(tf.keras.layers.Conv2DTranspose(128, (4, 4), strides=(2, 2), padding='same'))
+    model.add(tf.keras.layers.LeakyReLU(alpha=0.2))
+    model.add(tf.keras.layers.Conv2D(3, (3, 3), activation='tanh', padding='same'))
     return model
 
-# Define the discriminator model
-def make_discriminator_model():
+def discriminator_model():
     model = tf.keras.Sequential()
-    model.add(layers.Conv2D(64, (5, 5), strides=(2, 2), padding='same',
-                                     input_shape=[512, 512, 3]))
-    model.add(layers.LeakyReLU())
-    model.add(layers.Dropout(0.3))
-
-    model.add(layers.Conv2D(128, (5, 5), strides=(2, 2), padding='same'))
-    model.add(layers.LeakyReLU())
-    model.add(layers.Dropout(0.3))
-
-    model.add(layers.Flatten())
-    model.add(layers.Dense(1))
-
+    model.add(tf.keras.layers.Conv2D(64, (3, 3), strides=(2, 2), padding='same', input_shape=(IMAGE_SIZE, IMAGE_SIZE, 3)))
+    model.add(tf.keras.layers.LeakyReLU(alpha=0.2))
+    model.add(tf.keras.layers.Dropout(0.4))
+    model.add(tf.keras.layers.Conv2D(128, (3, 3), strides=(2, 2), padding='same'))
+    model.add(tf.keras.layers.LeakyReLU(alpha=0.2))
+    model.add(tf.keras.layers.Dropout(0.4))
+    model.add(tf.keras.layers.Conv2D(256, (3, 3), strides=(2, 2), padding='same'))
+    model.add(tf.keras.layers.LeakyReLU(alpha=0.2))
+    model.add(tf.keras.layers.Dropout(0.4))
+    model.add(tf.keras.layers.Flatten())
+    model.add(tf.keras.layers.Dense(1, activation='sigmoid'))
     return model
+```
 
-# Define the loss functions
+5. Define the generator and discriminator loss functions:
+
+```
 cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+
+def generator_loss(fake_output):
+    return cross_entropy(tf.ones_like(fake_output), fake_output)
 
 def discriminator_loss(real_output, fake_output):
     real_loss = cross_entropy(tf.ones_like(real_output), real_output)
     fake_loss = cross_entropy(tf.zeros_like(fake_output), fake_output)
     total_loss = real_loss + fake_loss
     return total_loss
+```
 
-def generator_loss(fake_output):
-    return cross_entropy(tf.ones_like(fake_output), fake_output)
+6. Define the optimizer and compile the models:
 
-# Define the optimizers
+```
 generator_optimizer = tf.keras.optimizers.Adam(1e-4)
 discriminator_optimizer = tf.keras.optimizers.Adam(1e-4)
 
-# Define the training loop
+generator = generator_model()
+discriminator = discriminator_model()
+
+generator.compile(loss=generator_loss, optimizer=generator_optimizer)
+discriminator.compile(loss=discriminator_loss, optimizer=discriminator_optimizer)
+```
+
+7. Define the training loop and train the GAN:
+
+```
 @tf.function
 def train_step(images):
-    noise = tf.random.normal([32, 100])
+    noise = tf.random.normal([BATCH_SIZE, LATENT_DIM])
 
     with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
         generated_images = generator(noise, training=True)
@@ -94,17 +112,30 @@ def train_step(images):
     generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
     discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
 
-# Train the model
-generator = make_generator_model()
-discriminator = make_discriminator_model()
+def train(dataset, epochs):
+    for epoch in range(epochs):
+        for image_batch in dataset:
+            train_step(image_batch)
 
-for epoch in range(100):
-    for image_batch in train_images:
-        train_step(image_batch)
+        if epoch % 10 == 0:
+            generate_and_save_images(generator, epoch)
 
-    if epoch % 10 == 0:
-        # Generate and save some sample images
-        noise = tf.random.normal([1, 100])
-        generated_image = generator(noise, training=False)
-        plt.imshow(generated_image[0, :, :, :])
-        plt.savefig(f'/content/drive/MyDrive/generated_images/image_{epoch}.png')
+def generate_and_save_images(model, epoch):
+    noise = tf.random.normal([BATCH_SIZE, LATENT_DIM])
+    generated_images = model(noise, training=False)
+
+    fig = plt.figure(figsize=(8, 8))
+    for i in range(generated_images.shape[0]):
+        plt.subplot(8, 8, i + 1)
+        plt.imshow((generated_images[i] + 1) / 2)
+        plt.axis('off')
+
+    plt.savefig('/content/gdrive/My Drive/female_fantasy_creatures_images/image_at_epoch_{:04d}.png'.format(epoch))
+    plt.close()
+```
+
+8. Call the `train` function to start the GAN training process:
+
+```
+train(train_dataset, EPOCHS)
+```
