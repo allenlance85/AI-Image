@@ -13,22 +13,14 @@
 !pip install opencv-python==4.2.0.34
 !pip install opencv-contrib-python==4.2.0.34
 !pip install easydict==1.9
-```
 
-4. In the second cell, we'll downloadthe pre-trained models and the necessary files by running the following code:
-
-```
 !wget https://github.com/reedscot/icml2016/raw/master/models/lrcn_coco_hdf5.h5
 !wget https://github.com/reedscot/icml2016/raw/master/data/coco/coco_classes.txt
 !wget https://github.com/reedscot/icml2016/raw/master/data/coco/word_to_index.pkl
 !wget https://github.com/reedscot/icml2016/raw/master/data/coco/index_to_word.pkl
 !wget https://github.com/reedscot/icml2016/raw/master/data/coco/train2014_ResNet50_features.h5
 !wget https://github.com/reedscot/icml2016/raw/master/data/coco/train2014_alexnet.pkl
-```
 
-5. In the third cell, we'll import the necessary libraries and set up our configuration file by running the following code:
-
-```
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -64,11 +56,7 @@ config = easydict.EasyDict({
     'epochs': 50,
     'learning_rate': 0.0002
 })
-```
 
-6. In the fourth cell, we'll define the necessary functions for loading the data, preprocessing the images, and generating captions. Run the following code:
-
-```
 # Load the data
 def load_data():
     # Load the captions
@@ -114,11 +102,7 @@ def generate_caption(model, image_features, word_to_index, index_to_word, num_cl
         if word == 'endseq':
             break
     return in_text
-```
 
-7. In the fifth cell, we'll define our model architecture, compile it, and train it using the preprocessed data. Run the following code:
-
-```
 # Define the model architecture
 def define_model(image_features, max_len, num_classes):
     # Define the image model
@@ -169,11 +153,7 @@ model = define_model(image_features, max_len=captions_train.shape[1], num_classe
 # Train the model
 checkpoint = ModelCheckpoint('model.h5', monitor='val_loss', save_best_only=True)
 history = model.fit([image_features_train, captions_train], captions_train[:, 1:], epochs=config.epochs, batch_size=config.batch_size, validation_data=([image_features_val, captions_val], captions_val[:, 1:]), callbacks=[checkpoint])
-```
 
-8. In the sixth cell, we'll use the trained model to generate an image from a given text input. Run the following code:
-
-```
 # Load the model
 model = define_model(image_features, max_len=captions_train.shape[1], num_classes=num_classes)
 model.load_weights('model.h5')
