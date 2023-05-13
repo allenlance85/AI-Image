@@ -1,0 +1,191 @@
+
+```
+!pip install tensorflow-gpu==1.15.0
+!pip install keras==2.2.4
+!pip install pillow==7.0.0
+!pip install matplotlib==3.2.1
+!pip install numpy==1.18.2
+!pip install pandas==1.0.3
+!pip install tqdm==4.45.0
+!pip install scipy==1.4.1
+!pip install scikit-image==0.16.2
+!pip install h5py==2.10.0
+!pip install opencv-python==4.2.0.34
+!pip install opencv-contrib-python==4.2.0.34
+!pip install easydict==1.9
+```
+
+4. In the second cell, we'll downloadthe pre-trained models and the necessary files by running the following code:
+
+```
+!wget https://github.com/reedscot/icml2016/raw/master/models/lrcn_coco_hdf5.h5
+!wget https://github.com/reedscot/icml2016/raw/master/data/coco/coco_classes.txt
+!wget https://github.com/reedscot/icml2016/raw/master/data/coco/word_to_index.pkl
+!wget https://github.com/reedscot/icml2016/raw/master/data/coco/index_to_word.pkl
+!wget https://github.com/reedscot/icml2016/raw/master/data/coco/train2014_ResNet50_features.h5
+!wget https://github.com/reedscot/icml2016/raw/master/data/coco/train2014_alexnet.pkl
+```
+
+5. In the third cell, we'll import the necessary libraries and set up our configuration file by running the following code:
+
+```
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import scipy.misc
+import os
+import h5py
+import easydict
+import cv2
+import pickle
+from tqdm import tqdm
+from PIL import Image
+from keras.layers import Conv2D, BatchNormalization, Activation, LeakyReLU, Concatenate, Conv2DTranspose, Input, Lambda, Dropout
+from keras.models import Model
+from keras.optimizers import Adam
+from keras.backend import tf as K
+from keras.applications.resnet50 import ResNet50
+from keras.preprocessing.sequence import pad_sequences
+from keras.utils import to_categorical
+from keras.callbacks import ModelCheckpoint
+from sklearn.utils import shuffle
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import confusion_matrix
+
+# Set up configuration file
+config = easydict.EasyDict({
+    'img_rows': 64,
+    'img_cols': 64,
+    'channels': 3,
+    'vocab_size': 1000,
+    'latent_dim': 128,
+    'batch_size': 64,
+    'epochs': 50,
+    'learning_rate': 0.0002
+})
+```
+
+6. In the fourth cell, we'll define the necessary functions for loading the data, preprocessing the images, and generating captions. Run the following code:
+
+```
+# Load the data
+def load_data():
+    # Load the captions
+    with open('word_to_index.pkl', 'rb') as f:
+        word_to_index = pickle.load(f)
+    with open('index_to_word.pkl', 'rb') as f:
+        index_to_word = pickle.load(f)
+    with open('train2014_alexnet.pkl', 'rb') as f:
+        train_data = pickle.load(f)
+    with open('coco_classes.txt', 'r') as f:
+        num_classes = len(f.readlines())
+
+    # Load the image features
+    with h5py.File('train2014_ResNet50_features.h5', 'r') as f:
+        image_features = np.array(f['image_features'])
+
+    return train_data, image_features, word_to_index, index_to_word, num_classes
+
+# Preprocess the images
+def preprocess_image(img_path):
+    img = Image.open(img_path)
+    img = img.resize((config.img_rows, config.img_cols))
+    img = np.array(img)
+    if img.ndim == 2:
+        img = np.expand_dims(img, axis=2)
+        img = np.tile(img, (1, 1, 3))
+    elif img.shape[2] == 4:
+        img = img[:, :, :3]
+    img = img.astype('float32') / 255.
+    img = np.expand_dims(img, axis=0)
+    return img
+
+# Generate captions
+def generate_caption(model, image_features, word_to_index, index_to_word, num_classes, max_len=20):
+    in_text = 'startseq'
+    for i in range(max_len):
+        sequence = [word_to_index[w] for w in in_text.split() if w in word_to_index]
+        sequence = pad_sequences([sequence], maxlen=max_len)
+        yhat = model.predict([image_features, sequence], verbose=0)
+        yhat = np.argmax(yhat)
+        word = index_to_word[yhat]
+        in_text += ' ' + word
+        if word == 'endseq':
+            break
+    return in_text
+```
+
+7. In the fifth cell, we'll define our model architecture, compile it, and train it using the preprocessed data. Run the following code:
+
+```
+# Define the model architecture
+def define_model(image_features, max_len, num_classes):
+    # Define the image model
+    image_model = ResNet50(input_shape=(1, 1, 2048), include_top=False)
+    image_model = Model(image_model.input, image_model.layers[-1].output)
+    image_model.trainable = False
+
+    # Define the caption model
+    caption_input = Input(shape=(max_len,))
+    caption_embedding = Embedding(input_dim=num_classes, output_dim=config.latent_dim, input_length=max_len)(caption_input)
+    caption_lstm = LSTM(256)(caption_embedding)
+
+    # Define the decoder model
+    decoder_input = Concatenate()([image_model.output, caption_lstm])
+    decoder_dense1 = Dense(256, activation='relu')(decoder_input)
+    decoder_dropout = Dropout(0.5)(decoder_dense1)
+    decoder_dense2 = Dense(num_classes, activation='softmax')(decoder_dropout)
+
+    # Define the final model
+    model = Model(inputs=[image_model.input, caption_input], outputs=decoder_dense2)
+
+    # Compile the model
+    optimizer = Adam(lr=config.learning_rate)
+    model.compile(loss='categorical_crossentropy', optimizer=optimizer)
+
+    return model
+
+# Load the data
+train_data, image_features, word_to_index, index_to_word, num_classes = load_data()
+
+# Preprocess the captions
+captions = []
+for i in range(len(train_data['image_names'])):
+    caption = 'startseq ' + train_data['captions'][i] + ' endseq'
+    captions.append(caption)
+captions = np.array(captions)
+
+# Preprocess the image features
+image_features = np.expand_dims(image_features, axis=1)
+image_features = np.tile(image_features, (1, config.batch_size, 1, 1))
+
+# Split the data into training and validation sets
+captions_train, captions_val, image_features_train, image_features_val = train_test_split(captions, image_features, test_size=0.2)
+
+# Define the model
+model = define_model(image_features, max_len=captions_train.shape[1], num_classes=num_classes)
+
+# Train the model
+checkpoint = ModelCheckpoint('model.h5', monitor='val_loss', save_best_only=True)
+history = model.fit([image_features_train, captions_train], captions_train[:, 1:], epochs=config.epochs, batch_size=config.batch_size, validation_data=([image_features_val, captions_val], captions_val[:, 1:]), callbacks=[checkpoint])
+```
+
+8. In the sixth cell, we'll use the trained model to generate an image from a given text input. Run the following code:
+
+```
+# Load the model
+model = define_model(image_features, max_len=captions_train.shape[1], num_classes=num_classes)
+model.load_weights('model.h5')
+
+# Generate an image from text
+text_input = 'a cat sitting on a table'
+image = preprocess_image('cat.jpg')
+image_feature = model.predict(image)
+caption = generate_caption(model, image_feature, word_to_index, index_to_word, num_classes)
+print(caption)
+
+# Show the generated image
+plt.imshow(image[0])
+plt.show()
+```
